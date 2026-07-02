@@ -4,13 +4,23 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>blar</title>
+<meta name="description" content="one textarea, one publish button. words go public the second you ship. no drafts.">
+<!-- homescreen presence — add to home screen and blar becomes a ship-it icon -->
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0a0a0b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="blar">
 <style>
 /* ── shared foundation tokens (pasted, not imported) ── */
 :root{
   --font: ui-monospace, "SF Mono", "JetBrains Mono", "Menlo", monospace;
   --bg:#0a0a0b; --panel:#141416; --line:#24242a;
   --fg:#e6e6e6; --dim:#6f6f78; --faint:#3a3a42;
-  --acc:#3ddc84; --acc-dim:#1f6f47; --warn:#ff5c5c;
+  --acc:#4aa8ff; --acc-dim:#1f4e7a; --warn:#ff5c5c;   /* per-app accent: blar = ship-it blue */
   --t-xl:2.25rem; --t-l:1.25rem; --t-m:1rem; --t-s:0.8125rem;
   --s1:4px; --s2:8px; --s3:16px; --s4:24px; --s5:48px;
   --radius:8px; --maxw:42rem;
@@ -21,9 +31,11 @@ body{
   font-family:var(--font); font-size:var(--t-m);
   text-transform:lowercase; line-height:1.5; letter-spacing:-0.01em;
   display:grid; place-items:start center; min-height:100dvh;
-  padding:var(--s5) var(--s3);
+  padding:max(var(--s5), env(safe-area-inset-top)) var(--s3) max(var(--s4), env(safe-area-inset-bottom));
+  -webkit-tap-highlight-color:transparent;
 }
 main{ width:100%; max-width:var(--maxw); }
+a{ color:var(--acc); text-decoration:none; } a:hover{ text-decoration:underline; }
 button{
   font:inherit; text-transform:lowercase; cursor:pointer;
   background:var(--panel); color:var(--fg);
@@ -33,11 +45,13 @@ button{
 button:hover{ border-color:var(--acc-dim); }
 button:active{ transform:translateY(1px); }
 button:disabled{ opacity:.6; cursor:default; }
-.dim{ color:var(--dim); }
+.dim{ color:var(--dim); } .acc{ color:var(--acc); }
 
 /* ── blar ── */
-.bar{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:var(--s3); }
+.bar{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:var(--s2); gap:var(--s3); }
 .mark{ font-size:var(--t-l); }
+.sub{ display:flex; justify-content:space-between; align-items:baseline; gap:var(--s3); margin-bottom:var(--s3); font-size:var(--t-s); }
+#read{ white-space:nowrap; }
 .setup{ margin-bottom:var(--s3); }
 #tok{ width:100%; background:var(--panel); color:var(--fg); border:1px solid var(--acc-dim);
       border-radius:var(--radius); padding:var(--s3); font:inherit; }
@@ -49,11 +63,18 @@ textarea#ed::placeholder{ color:var(--faint); }
 .toast{ min-height:1.2em; margin-top:var(--s3); font-size:var(--t-s); opacity:0; transition:opacity .2s; }
 .toast.show{ opacity:1; }
 .toast.ok{ color:var(--acc); } .toast.warn{ color:var(--warn); }
+#live{ min-height:1.2em; margin-top:var(--s2); font-size:var(--t-s); }
+.ship{ animation:ship .5s ease; }
+@keyframes ship{ 0%{transform:translateY(0); opacity:1} 45%{transform:translateY(-8px); opacity:.6} 100%{transform:translateY(0); opacity:1} }
 </style>
 </head>
 <body>
 <main>
   <header class="bar"><span class="mark">blar</span><span class="dim">neoselfy</span></header>
+  <div class="sub">
+    <span id="shipped" class="dim"></span>
+    <a id="read" href="https://letam.github.io/blar-posts/" target="_blank" rel="noopener">read what you've shipped →</a>
+  </div>
   <div id="setup" class="setup" hidden>
     <input id="tok" type="password" autocomplete="off"
       placeholder="paste your github token once. it stays on this device. blar has no server and never sees it.">
@@ -64,18 +85,20 @@ textarea#ed::placeholder{ color:var(--faint); }
     <button id="pub">publish → it goes live</button>
   </div>
   <p id="toast" class="toast" aria-live="polite"></p>
+  <p id="live"></p>
 </main>
 <script type="module">
 const KEY  = "blar";
 const REPO = "letam/blar-posts"; // owner/repo for your posts. must exist, with a posts/ folder. edit this.
+const READER = "https://letam.github.io/blar-posts/";
 const $ = s => document.querySelector(s);
 
 function load(){ try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } }
 const save = s => localStorage.setItem(KEY, JSON.stringify(s));
 const store = load();
 
-const ed = $("#ed"), wc = $("#wc"), pub = $("#pub"), toastEl = $("#toast"),
-      setup = $("#setup"), tok = $("#tok");
+const ed = $("#ed"), wc = $("#wc"), pub = $("#pub"), toastEl = $("#toast"), liveEl = $("#live"),
+      setup = $("#setup"), tok = $("#tok"), shippedEl = $("#shipped");
 
 // first run only: ask for the token once, then never again
 if (!store.token) setup.hidden = false;
@@ -96,7 +119,19 @@ let toastTimer;
 function toast(msg, kind){
   toastEl.textContent = msg; toastEl.className = "toast show " + (kind || "");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (toastEl.className = "toast"), 5000);
+  toastTimer = setTimeout(() => (toastEl.className = "toast"), 6000);
+}
+
+// shipped = 3 posts. read the true public count so the number is honest across devices (no token needed).
+async function refreshCount(){
+  try {
+    const r = await fetch(`https://api.github.com/repos/${REPO}/contents/posts`, { headers:{ "Accept":"application/vnd.github+json" }});
+    if (!r.ok) return;
+    const files = await r.json();
+    const n = Array.isArray(files) ? files.filter(f => f.name.endsWith(".md")).length : 0;
+    shippedEl.textContent = n >= 3 ? `shipped · ${n} posts — you're past the line` : `shipped · ${n}/3 posts`;
+    if (n >= 3) shippedEl.classList.add("acc");
+  } catch { /* offline is fine — the box still writes */ }
 }
 
 function putFile(path, content, message){
@@ -127,9 +162,14 @@ pub.addEventListener("click", async () => {
       res  = await putFile(path, body, `post ${path}`);
     }
     if (!res.ok) throw new Error(res.status);
-    const owner = REPO.split("/")[0];
-    toast(`live. ${owner}/${path}. you didn't draft it. you shipped it.`, "ok");
-    ed.value = ""; render(); ed.focus();
+    // publish is a *release* — the words leave the box and become public. celebrate the act, then clear.
+    ed.value = ""; render(); ed.classList.remove("ship"); void ed.offsetWidth; ed.classList.add("ship");
+    if (navigator.vibrate) navigator.vibrate([12, 40, 12]);
+    toast("live. you didn't draft it. you shipped it.", "ok");
+    const blob = `https://github.com/${REPO}/blob/main/${path}`;
+    liveEl.innerHTML = `<a href="${blob}" target="_blank" rel="noopener">→ your post is public. open it.</a>`;
+    refreshCount();
+    ed.focus();
   } catch {
     toast("didn't ship. your words are still in the box. don't close the tab. try again.", "warn");
   } finally {
@@ -143,7 +183,7 @@ window.addEventListener("beforeunload", e => {
     "you have unpublished words. closing = gone. blar doesn't keep drafts on purpose."; }
 });
 
-ed.focus(); render();
+ed.focus(); render(); refreshCount();
 </script>
 </body>
 </html>
